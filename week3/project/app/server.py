@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from loguru import logger
 
 from classifier import NewsCategoryClassifier
+from datetime import datetime
 
 
 class PredictRequest(BaseModel):
@@ -34,6 +35,11 @@ def startup_event():
     Access to the model instance and log file will be needed in /predict endpoint, make sure you
     store them as global variables
     """
+    global news_classifier
+    news_classifier = NewsCategoryClassifier(verbose=True)
+    news_classifier.load(MODEL_PATH)
+    global loggs_file
+    loggs_file = open(file=LOGS_OUTPUT_PATH, mode="a")
     logger.info("Setup completed")
 
 
@@ -46,6 +52,9 @@ def shutdown_event():
     2. Any other cleanups
     """
     logger.info("Shutting down application")
+    with open(LOGS_OUTPUT_PATH, "w+") as file:
+        file.flush()
+        file.close()
 
 
 @app.post("/predict", response_model=PredictResponse)
@@ -65,7 +74,25 @@ def predict(request: PredictRequest):
     }
     3. Construct an instance of `PredictResponse` and return
     """
-    response = PredictResponse(scores={"label1": 0.9, "label2": 0.1}, label="label1")
+    start_time = datetime.now()
+    if news_classifier == None:
+        startup_event()
+    
+    preds = news_classifier.predict_proba(request.dict())
+    label = sorted(preds.items(), key=lambda x: x[1], reverse=True)[0][0]
+    response = PredictResponse(scores=preds.items(), label=label)
+
+    end_time = datetime.now()
+
+    loggs = dict(
+        timestamp=datetime.now().strftime("%Y:%m:%d %H:%M:%S"),
+        request=request.dict(),
+        prediction=response.dict(),
+        latency=end_time - start_time
+        )
+    loggs_file.write(str(loggs) + "\n")
+    loggs_file.flush()
+
     return response
 
 
